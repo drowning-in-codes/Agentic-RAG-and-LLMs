@@ -9,17 +9,18 @@ from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from transformers import AutoTokenizer, ToolCollection
+from transformers import AutoTokenizer
 from langchain_community.vectorstores.utils import DistanceStrategy
 from tqdm import tqdm
 from dataclasses import dataclass
 from gradio.components import Component
 from transformers.agents import Tool
 from langchain_core.vectorstores import VectorStore
-from transformers.agents import HfApiEngine, ReactJsonAgent, load_tool
-from langchain_core.prompts import ChatPromptTemplate
+from transformers.agents import HfApiEngine, ReactJsonAgent
 from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from transformers.agents import PythonInterpreterTool
+from langchain_community.document_loaders import UnstructuredHTMLLoader
+from langchain_community.document_loaders import WebBaseLoader
 
 
 class RetrieverTool(Tool):
@@ -77,9 +78,11 @@ async def process_files(files, docs):
 
 
 async def process_file_query(query, history, *config):
-
     rag_config = RAGConfig.fromList(config)
     docs = []
+    if rag_config.external_webpage.value:
+        loader = WebBaseLoader(rag_config.external_webpage.value)
+        docs.extend(loader.load())
     process_files(rag_config.files, docs)
     source_docs = [
         Document(page_content=doc["text"], metadata={"source": doc["source"]})
@@ -149,6 +152,7 @@ class RAGConfig:
     search_strategy: Component
     infer_model: Component
     files: Component
+    external_webpage: Component
 
     def toList(self):
         return [
@@ -239,6 +243,7 @@ with gr.Blocks() as app:
         local_files = gr.File(
             label="上传文件", file_count="multiple", file_types=ALLOW_FILE_TYPES
         )
+        external_webpage = gr.Textbox(label="解析网页", placeholder="输入外部网站链接")
         with gr.Row():
             with gr.Column():
                 # 选择模型来源
@@ -309,6 +314,7 @@ with gr.Blocks() as app:
             tokenizer_source=tokenizer_source,
             files=local_files,
             infer_model=infer_model,
+            external_webpage=external_webpage,
         )
         msg.submit(
             process_file_query,
