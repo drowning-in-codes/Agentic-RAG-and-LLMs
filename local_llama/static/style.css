@@ -50,6 +50,30 @@ button {
     color: #000;
   }
 }
+#btn_2 {
+  background-color: #007bff;
+  color: #fff;
+  border: 1px solid #007bff;
+  &:hover {
+    background-color: #0056b3;
+    color: #fff;
+  }
+}
+#btn_3 {
+  background-color: #6c757d;
+  color: #fff;
+  border: 1px solid #6c757d;
+  &:hover {
+    background-color: #343a40;
+    color: #fff;
+  }
+}
+.btn_list {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 80%;
+}
 .textBox {
   margin-block: 0.5em;
   width: 70%;
@@ -62,4 +86,30 @@ button {
   font-family: "Rubik Vinyl", serif;
   font-weight: 400;
   font-style: normal;
+}
+
+#my-popover {
+  &::backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+  }
+  &:popover-open {
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 10rem;
+    text-align: center;
+    inset: unset;
+    position: absolute;
+    width: 50%;
+    height: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .popover-content {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    justify-content: center;
+    align-items: center;
+  }
 }

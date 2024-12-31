@@ -1,10 +1,11 @@
 import os
+import json
 import getpass
+import logging
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
 from langchain_ollama import ChatOllama
-from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,6 +30,10 @@ def _set_env(var: str):
         os.environ[var] = getpass.getpass(f"{var}: ")
 
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
+
 app = FastAPI(title="Ollama API")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -39,6 +44,40 @@ templates = Jinja2Templates(directory="templates")
 def search(query: str):
     ai_msg = chain.invoke(query)
     return ai_msg.content
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            for chunk in chain.stream(data):
+                await websocket.send_text(chunk.content)
+    except WebSocketDisconnect:
+        logging.info("WebSocket connection closed")
+        await websocket.close()
+
+
+async def event_generator(data):
+    try:
+        for chunk in chain.stream(data):
+            response_str = "data: " + json.dumps(chunk.content) + "\n\n"
+            yield response_str.encode("utf-8")
+        # logging.info("Event generator done")
+        print("Event generator done")
+        # end
+        yield "data: {}\n\n"
+        yield "event: close\n\n".encode("utf-8")
+    except Exception as e:
+        logging.error(str(e))
+        yield f"data: {str(e)}\n\n".encode("utf-8")
+
+
+@app.get("/sse")
+async def sse(query: str):
+    # logging.info(f"Query: {query}")
+    return StreamingResponse(event_generator(query), media_type="text/event-stream")
 
 
 @app.get("/", response_class=HTMLResponse)
