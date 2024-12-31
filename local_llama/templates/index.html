@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama</title>
+
+    <link rel="stylesheet" href="{{ url_for("static",path="style.css") }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Ollama</h1>
+        <p>Ask me anything!</p> 
+
+        <form action="/search" method="POST">
+            <input type="text" id="text"  placeholder="Enter your question">
+            <button type="submit" id="btn">Ask!</button>
+        </form>
+
+        <div class="textBox" id="textBox">
+        </div>
+    </div>
+    
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Honk:MORF@21&family=Rubik+Vinyl&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js" integrity="sha512-WFN04846sdKMIP5LKNphMaWzU7YpMyCU245etK3g/2ARYbPK9Ub18eG+ljU96qKRCWh+quCY7yefSmlkQw1ANQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="{{ url_for("static",path="index.js") }}"></script>
+</body>
+</html>
