@@ -18,9 +18,11 @@ from operator import itemgetter
 from langchain_community.document_loaders import PyPDFLoader
 from transformers import AutoTokenizer
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_community.docstore.in_memory import InMemoryDocstore
+import faiss
 
 
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
@@ -49,9 +51,9 @@ default_prompt = ChatPromptTemplate(
     [
         (
             "system",
-            "You are a helpful assistant that can answer questions about the world. I will ask you a question and you will provide an answer. If you don't know the answer, you can say 'I don't know'.",
+            "You are a helpful assistant that can answer questions about the world. I will ask you a question and you will provide an answer. If you don't know the answer, you can say 'I don't know'."
+            "use the following context to help answering: {context}",
         ),
-        ("system", "use the following context to help {context}"),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}"),
     ]
@@ -210,21 +212,24 @@ text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
 
 
 embedding_model = HuggingFaceEmbeddings(model_name="thenlper/gte-small")
-
+index = faiss.IndexFlatL2(len(embedding_model.embed_query("hello AI")))
 vectordb = FAISS(
-    embedding_function=embedding_model, distance_strategy=DistanceStrategy.COSINE
+    embedding_function=embedding_model,
+    distance_strategy=DistanceStrategy.COSINE,
+    index=index,
+    index_to_docstore_id={},
+    docstore=InMemoryDocstore(),
 )
 
 docs = []
-loader = PyPDFLoader(extract_images=True)
 
 
 async def talk(history: list):
     global docs
     context = None
-    if len(docs) != 0:
-        context = vectordb.as_retriever()
     user_msg = history[-1]["content"]
+    if len(docs) != 0:
+        context = vectordb.search(user_msg, search_type="similarity")
     history.append({"role": "assistant", "content": ""})
     for chunk in chain_with_history.stream(
         {"question": user_msg, "history": history, "context": context},
@@ -244,7 +249,6 @@ def user(user_message, history: list):
 def add_file(loaded_file):
     global docs
     if loaded_file:
-        print(loaded_file)
         docs.append(loaded_file.name)
         pages = []
         for page in PyPDFLoader(loaded_file).lazy_load():
@@ -258,7 +262,7 @@ def add_file(loaded_file):
 
 with gr.Blocks() as app:
     gr.Markdown("## Langchain Chat")
-    loaded_file = gr.File(label="Upload pdf File", file_types=["pdf"])
+    loaded_file = gr.File(label="Upload pdf File", file_types=[".pdf"])
     chatbot = gr.Chatbot(type="messages")
     with gr.Group():
         route_btn = gr.Checkbox(label="Enable Auto Router", value=False)
@@ -272,7 +276,7 @@ with gr.Blocks() as app:
             chatbot,
         ],
         [msg, chatbot],
-    ).then(talk, [chatbot, loaded_file], chatbot)
+    ).then(talk, [chatbot], chatbot)
     route_btn.change(autoRoute, route_btn)
     clear.click(lambda: None, None, chatbot)
     loaded_file.change(add_file, loaded_file)
