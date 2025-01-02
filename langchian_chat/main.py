@@ -6,9 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from pydantic import BaseModel, Field
-from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, AIMessage
-from langchain.chains.router import MultiPromptChain
 from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -17,6 +15,12 @@ from typing_extensions import TypedDict
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from operator import itemgetter
+from langchain_community.document_loaders import PyPDFLoader
+from transformers import AutoTokenizer
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores.utils import DistanceStrategy
 
 
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
@@ -47,6 +51,7 @@ default_prompt = ChatPromptTemplate(
             "system",
             "You are a helpful assistant that can answer questions about the world. I will ask you a question and you will provide an answer. If you don't know the answer, you can say 'I don't know'.",
         ),
+        ("system", "use the following context to help {context}"),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}"),
     ]
@@ -59,10 +64,7 @@ physics_template = ChatPromptTemplate.from_messages(
 You are great at answering questions about physics in a concise\
 and easy to understand manner. \
 When you don't know the answer to a question you admit\
-that you don't know.
-
-Here is a question:
-{question}""",
+that you don't know.""",
         ),
         ("human", "{question}"),
     ]
@@ -135,6 +137,7 @@ class RouteQuery(TypedDict):
 route_system = """Route the user's query to the appropriate assistant. 
  The assistant will then provide an answer to the user's query. The output format will be 
 {{destination: string}} 
+context information: {{context}}.
 The destination can be one of the following: Math, Physics, History, Computer Science, and Default. 
 """
 route_prompt = ChatPromptTemplate.from_messages(
@@ -158,7 +161,6 @@ route_chain = (
 
 
 def select_chain(chain_name):
-    print(chain_name)
     destination = chain_name["destination"]
     if destination == "Math":
         return math_chain
@@ -173,9 +175,9 @@ def select_chain(chain_name):
 
 
 auto_route_chain = {
-    "destination": route_chain,  # "animal" or "vegetable"
-    "question": lambda x: x["question"],  # pass through input query
-    "history": lambda x: x["history"],  # pass through history
+    "destination": route_chain,
+    "question": lambda x: x["question"],
+    "history": lambda x: x["history"],
 } | RunnableLambda(select_chain)
 
 
@@ -197,11 +199,35 @@ def autoRoute(enable_route: bool):
         )
 
 
-def talk(history: list):
+text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+    AutoTokenizer.from_pretrained("thenlper/gte-small"),
+    chunk_size=200,
+    chunk_overlap=20,
+    add_start_index=True,
+    strip_whitespace=True,
+    separators=["\n\n", "\n", ".", " ", ""],
+)
+
+
+embedding_model = HuggingFaceEmbeddings(model_name="thenlper/gte-small")
+
+vectordb = FAISS(
+    embedding_function=embedding_model, distance_strategy=DistanceStrategy.COSINE
+)
+
+docs = []
+loader = PyPDFLoader(extract_images=True)
+
+
+async def talk(history: list):
+    global docs
+    context = None
+    if len(docs) != 0:
+        context = vectordb.as_retriever()
     user_msg = history[-1]["content"]
     history.append({"role": "assistant", "content": ""})
     for chunk in chain_with_history.stream(
-        {"question": user_msg, "history": history},
+        {"question": user_msg, "history": history, "context": context},
         config={"configurable": {"session_id": "pro"}},
     ):
         if isinstance(chunk, str):
@@ -215,17 +241,41 @@ def user(user_message, history: list):
     return "", history + [{"role": "user", "content": user_message}]
 
 
+def add_file(loaded_file):
+    global docs
+    if loaded_file:
+        print(loaded_file)
+        docs.append(loaded_file.name)
+        pages = []
+        for page in PyPDFLoader(loaded_file).lazy_load():
+            pages.append(page)
+        doc = text_splitter.split_documents(pages)
+        vectordb.add_documents(doc)
+        gr.Info("File uploaded successfully")
+    else:
+        gr.Info("No file uploaded")
+
+
 with gr.Blocks() as app:
     gr.Markdown("## Langchain Chat")
+    loaded_file = gr.File(label="Upload pdf File", file_types=["pdf"])
     chatbot = gr.Chatbot(type="messages")
     with gr.Group():
         route_btn = gr.Checkbox(label="Enable Auto Router", value=False)
     msg = gr.Textbox()
     clear = gr.Button("Clear")
 
-    msg.submit(user, [msg, chatbot], [msg, chatbot]).then(talk, [chatbot], chatbot)
+    msg.submit(
+        user,
+        [
+            msg,
+            chatbot,
+        ],
+        [msg, chatbot],
+    ).then(talk, [chatbot, loaded_file], chatbot)
     route_btn.change(autoRoute, route_btn)
     clear.click(lambda: None, None, chatbot)
+    loaded_file.change(add_file, loaded_file)
 
 
 if __name__ == "__main__":

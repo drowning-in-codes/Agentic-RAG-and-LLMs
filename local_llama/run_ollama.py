@@ -65,10 +65,8 @@ async def event_generator(data):
             response_str = "data: " + json.dumps(chunk.content) + "\n\n"
             yield response_str.encode("utf-8")
         # logging.info("Event generator done")
-        print("Event generator done")
         # end
         yield "data: {}\n\n"
-        yield "event: close\n\n".encode("utf-8")
     except Exception as e:
         logging.error(str(e))
         yield f"data: {str(e)}\n\n".encode("utf-8")

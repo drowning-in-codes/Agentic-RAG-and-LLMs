@@ -58,7 +58,6 @@ ask_sse_btn.addEventListener("click", async (event) => {
   text_ele.value = "";
   const eventSource = new EventSource(`/sse?query=${text}`);
   eventSource.onmessage = function (event) {
-    console.log(event);
     let trimmed_data = _.trim(event.data, '"');
     if (trimmed_data == "") {
       eventSource.close();
