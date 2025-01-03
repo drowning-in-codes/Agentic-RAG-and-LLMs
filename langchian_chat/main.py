@@ -1,28 +1,35 @@
 from operator import itemgetter
-from typing import List
-import gradio as gr
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, AIMessage
-from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
-from langchain.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from typing import Literal
-from typing_extensions import TypedDict
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from operator import itemgetter
-from langchain_community.document_loaders import PyPDFLoader
-from transformers import AutoTokenizer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import DistanceStrategy
-from langchain_community.docstore.in_memory import InMemoryDocstore
+from typing import List, Literal
+from datetime import date
 import faiss
+import gradio as gr
+import langchain
+from langchain.agents.agent import RunnableAgent
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import BaseMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import ChatOllama
+from langchain_community.agent_toolkits.load_tools import load_tools
+from pydantic import BaseModel, Field
+from transformers import AutoTokenizer
+from typing_extensions import TypedDict
+from langchain_core.runnables import (
+    RunnableLambda,
+    ConfigurableFieldSpec,
+    RunnablePassthrough,
+)
+from langchain.agents import AgentExecutor
+from langchain_experimental.tools.python.tool import PythonREPLTool
+from langchain_core.tools.convert import tool
 
 
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
@@ -130,6 +137,17 @@ history_chain = history_template | llm | StrOutputParser()
 computerscience_chain = computerscience_template | llm | StrOutputParser()
 
 
+@tool
+def time(text: str) -> str:
+    """Returns todays date, use this for any \
+    questions related to knowing todays date. \
+    The input should always be an empty string, \
+    and this function will always return todays \
+    date - any date mathmatics should occur \
+    outside this function."""
+    return str(date.today())
+
+
 class RouteQuery(TypedDict):
     """Route query to destination."""
 
@@ -155,8 +173,16 @@ chain_with_history = RunnableWithMessageHistory(
     get_by_session_id,
     input_messages_key="question",
     history_messages_key="history",
-)
+).with_config({"configurable": {"session_id": "pro"}})
+tools = load_tools(["wikipedia"])
+print({tool.name: tool for tool in tools})
 
+agent = RunnableAgent(
+    runnable=chain_with_history,
+    input_keys_arg=["question", "context"],
+    output_keys_arg=["content"],
+)
+agent_executor = AgentExecutor(agent=agent,tools=tools+[PythonREPLTool(),time], verbose=True)
 route_chain = (
     route_prompt | llm.with_structured_output(RouteQuery) | itemgetter("destination")
 )
@@ -184,7 +210,7 @@ auto_route_chain = {
 
 
 def autoRoute(enable_route: bool):
-    global chain_with_history
+    global chain_with_history, agent_executor
     if enable_route:
         chain_with_history = RunnableWithMessageHistory(
             auto_route_chain,
@@ -192,6 +218,15 @@ def autoRoute(enable_route: bool):
             input_messages_key="question",
             history_messages_key="history",
         )
+
+        chain_with_history.config = {"configurable": {"session_id": "pro"}}
+        agent = RunnableAgent(
+            runnable=chain_with_history,
+            input_keys_arg=["question", "context"],
+            output_keys_arg=["content"],
+        )
+        agent_executor.agent = agent
+
     else:
         chain_with_history = RunnableWithMessageHistory(
             default_chain,
@@ -199,6 +234,14 @@ def autoRoute(enable_route: bool):
             input_messages_key="question",
             history_messages_key="history",
         )
+        chain_with_history.config = {"configurable": {"session_id": "pro"}}
+        agent = RunnableAgent(
+            runnable=chain_with_history,
+            input_keys_arg=["question"],
+            output_keys_arg=["content"],
+        )
+
+        agent_executor.agent = agent
 
 
 text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
@@ -231,7 +274,7 @@ async def talk(history: list):
     if len(docs) != 0:
         context = vectordb.search(user_msg, search_type="similarity")
     history.append({"role": "assistant", "content": ""})
-    for chunk in chain_with_history.stream(
+    for chunk in agent_executor.stream(
         {"question": user_msg, "history": history, "context": context},
         config={"configurable": {"session_id": "pro"}},
     ):
@@ -260,12 +303,20 @@ def add_file(loaded_file):
         gr.Info("No file uploaded")
 
 
+def eval_langchain(eval_btn):
+    if eval_btn:
+        langchain.debug = True
+    else:
+        langchain.debug = False
+
+
 with gr.Blocks() as app:
     gr.Markdown("## Langchain Chat")
     loaded_file = gr.File(label="Upload pdf File", file_types=[".pdf"])
     chatbot = gr.Chatbot(type="messages")
     with gr.Group():
         route_btn = gr.Checkbox(label="Enable Auto Router", value=False)
+        eval_btn = gr.Checkbox(label="Enable Evaluation", value=False)
     msg = gr.Textbox()
     clear = gr.Button("Clear")
 
@@ -278,6 +329,7 @@ with gr.Blocks() as app:
         [msg, chatbot],
     ).then(talk, [chatbot], chatbot)
     route_btn.change(autoRoute, route_btn)
+    eval_btn.change(eval_langchain, eval_btn)
     clear.click(lambda: None, None, chatbot)
     loaded_file.change(add_file, loaded_file)
 
