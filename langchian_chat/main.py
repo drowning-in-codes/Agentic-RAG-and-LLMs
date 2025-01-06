@@ -23,6 +23,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_community.docstore.in_memory import InMemoryDocstore
 import faiss
+from diffusers import DDPMPipeline
 
 
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
@@ -246,6 +247,28 @@ def user(user_message, history: list):
     return "", history + [{"role": "user", "content": user_message}]
 
 
+ddpm = None
+
+
+def generate_images(prompt: str):
+    global ddpm
+    if ddpm is None:
+        download_models
+        ddpm = DDPMPipeline.from_pretrained(
+            "google/ddpm-cat-256", use_safetensors=True
+        ).to("cuda")
+    image = ddpm(num_inference_steps=25).images[0]
+    return image
+
+
+def download_models():
+    global ddpm
+    gr.Info("Downloading models...")
+    ddpm = DDPMPipeline.from_pretrained("google/ddpm-cat-256", use_safetensors=True).to(
+        "cuda"
+    )
+
+
 def add_file(loaded_file):
     global docs
     if loaded_file:
@@ -268,7 +291,6 @@ with gr.Blocks() as app:
         route_btn = gr.Checkbox(label="Enable Auto Router", value=False)
     msg = gr.Textbox()
     clear = gr.Button("Clear")
-
     msg.submit(
         user,
         [
@@ -280,6 +302,15 @@ with gr.Blocks() as app:
     route_btn.change(autoRoute, route_btn)
     clear.click(lambda: None, None, chatbot)
     loaded_file.change(add_file, loaded_file)
+
+    with gr.Group():
+        gr.Label("Generate Images")
+        download_model = gr.Button("check whether downloads models or not")
+        prompt = gr.Textbox(label="Prompt")
+        generate = gr.Button("Generate")
+        image = gr.Image()
+    download_model.click(download_models)
+    generate.click(generate_images, prompt, image)
 
 
 if __name__ == "__main__":
