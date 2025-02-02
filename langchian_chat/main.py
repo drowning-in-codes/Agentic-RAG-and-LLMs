@@ -1,29 +1,25 @@
 from operator import itemgetter
-from typing import List
-import gradio as gr
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, AIMessage
-from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
-from langchain.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from typing import Literal
-from typing_extensions import TypedDict
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from operator import itemgetter
-from langchain_community.document_loaders import PyPDFLoader
-from transformers import AutoTokenizer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import DistanceStrategy
-from langchain_community.docstore.in_memory import InMemoryDocstore
+from typing import List, Literal
+
 import faiss
+import gradio as gr
 from diffusers import DDPMPipeline
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import BaseMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
+from transformers import AutoTokenizer
+from typing_extensions import TypedDict
 
 
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
@@ -123,13 +119,6 @@ time complexity and space complexity.""",
     ]
 )
 
-llm = ChatOllama(model="llama3.2", temperature=0.9)
-
-math_chain = math_template | llm | StrOutputParser()
-physics_chain = physics_template | llm | StrOutputParser()
-history_chain = history_template | llm | StrOutputParser()
-computerscience_chain = computerscience_template | llm | StrOutputParser()
-
 
 class RouteQuery(TypedDict):
     """Route query to destination."""
@@ -150,17 +139,14 @@ route_prompt = ChatPromptTemplate.from_messages(
         ("human", "{question}"),
     ]
 )
-default_chain = default_prompt | llm | StrOutputParser()
-chain_with_history = RunnableWithMessageHistory(
-    default_chain,
-    get_by_session_id,
-    input_messages_key="question",
-    history_messages_key="history",
-)
 
-route_chain = (
-    route_prompt | llm.with_structured_output(RouteQuery) | itemgetter("destination")
-)
+chain_with_history = None
+route_chain = None
+default_chain = None
+math_chain = None
+physics_chain = None
+history_chain = None
+computerscience_chain = None
 
 
 def select_chain(chain_name):
@@ -177,29 +163,37 @@ def select_chain(chain_name):
         return default_chain
 
 
-auto_route_chain = {
-    "destination": route_chain,
-    "question": lambda x: x["question"],
-    "history": lambda x: x["history"],
-} | RunnableLambda(select_chain)
+auto_route_chain = None
 
 
-def autoRoute(enable_route: bool):
-    global chain_with_history
-    if enable_route:
-        chain_with_history = RunnableWithMessageHistory(
-            auto_route_chain,
-            get_by_session_id,
-            input_messages_key="question",
-            history_messages_key="history",
-        )
+def prepare_model(model_name):
+    global chain_with_history, route_chain, default_chain, physics_chain, math_chain, history_chain, computerscience_chain, auto_route_chain
+    if model_name.lower() == "deepseek":
+        llm = ChatOllama(model="deepseek", temperature=0.9)
     else:
-        chain_with_history = RunnableWithMessageHistory(
-            default_chain,
-            get_by_session_id,
-            input_messages_key="question",
-            history_messages_key="history",
-        )
+        llm = ChatOllama(model="llama3.2", temperature=0.9)
+    math_chain = math_template | llm | StrOutputParser()
+    physics_chain = physics_template | llm | StrOutputParser()
+    history_chain = history_template | llm | StrOutputParser()
+    computerscience_chain = computerscience_template | llm | StrOutputParser()
+    default_chain = default_prompt | llm | StrOutputParser()
+    route_chain = (
+        route_prompt
+        | llm.with_structured_output(RouteQuery)
+        | itemgetter("destination")
+    )
+
+    chain_with_history = RunnableWithMessageHistory(
+        default_chain,
+        get_by_session_id,
+        input_messages_key="question",
+        history_messages_key="history",
+    )
+    auto_route_chain = {
+        "destination": route_chain,
+        "question": lambda x: x["question"],
+        "history": lambda x: x["history"],
+    } | RunnableLambda(select_chain)
 
 
 text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
@@ -226,7 +220,7 @@ docs = []
 
 
 async def talk(history: list):
-    global docs
+    global docs, chain_with_history
     context = None
     user_msg = history[-1]["content"]
     if len(docs) != 0:
@@ -243,7 +237,8 @@ async def talk(history: list):
         yield history
 
 
-def user(user_message, history: list):
+def user(model, user_message, history: list):
+    prepare_model(model)
     return "", history + [{"role": "user", "content": user_message}]
 
 
@@ -283,8 +278,29 @@ def add_file(loaded_file):
         gr.Info("No file uploaded")
 
 
+def autoRoute(enable_route: bool):
+    global chain_with_history, auto_route_chain
+    if enable_route:
+        chain_with_history = RunnableWithMessageHistory(
+            auto_route_chain,
+            get_by_session_id,
+            input_messages_key="question",
+            history_messages_key="history",
+        )
+    else:
+        chain_with_history = RunnableWithMessageHistory(
+            default_chain,
+            get_by_session_id,
+            input_messages_key="question",
+            history_messages_key="history",
+        )
+
+
 with gr.Blocks() as app:
     gr.Markdown("## Langchain Chat")
+    model = gr.Dropdown(
+        choices=["llama3.2", "deepseek"], label="model", info="Choose your model!"
+    )
     loaded_file = gr.File(label="Upload pdf File", file_types=[".pdf"])
     chatbot = gr.Chatbot(type="messages")
     with gr.Group():
@@ -294,11 +310,13 @@ with gr.Blocks() as app:
     msg.submit(
         user,
         [
+            model,
             msg,
             chatbot,
         ],
         [msg, chatbot],
     ).then(talk, [chatbot], chatbot)
+
     route_btn.change(autoRoute, route_btn)
     clear.click(lambda: None, None, chatbot)
     loaded_file.change(add_file, loaded_file)
