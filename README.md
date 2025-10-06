@@ -4,7 +4,8 @@ Some AI Agent and RAG demos implemented using [Gradio](https://www.gradio.app), 
 Dependency Management: 
 [uv](https://docs.astral.sh/uv/)
 
-![image-20241228204813028](https://proanimer-img.oss-cn-shanghai.aliyuncs.com/alimg/image-20241228204813028.png)
+<img width="2097" height="931" alt="RAG" src="https://github.com/user-attachments/assets/11d65f6f-578f-4658-a5e7-18ea284695f9" />
+
 Finished:
 - [x] simple RAG
 - [x] state Chatbot
